@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13-alpine
+    container_name: zabbix-monitor-db
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: zabbix_monitor,zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: secret123
+    volumes:
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-6.0-latest
+    container_name: zabbix-server
+    environment:
+      DB_SERVER_HOST: db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: secret123
+      POSTGRES_DB: zabbix
+    ports:
+      - "10051:10051"
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.0-latest
+    container_name: zabbix-web
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: secret123
+      POSTGRES_DB: zabbix
+      PHP_TZ: Europe/Moscow
+    ports:
+      - "8080:8080"
+    depends_on:
+      - zabbix-server
+      - db
+    restart: unless-stopped
+
+  web:
+    build: ./app
+    container_name: zabbix-monitor-web
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - DATABASE_URL=postgresql://zabbix:secret123@db:5432/zabbix_monitor
+      - ZABBIX_URL=http://zabbix-web:8080/api_jsonrpc.php
+      - ZABBIX_USER=Admin
+      - ZABBIX_PASSWORD=zabbix
+    depends_on:
+      - db
+      - zabbix-server
+      - zabbix-web
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
