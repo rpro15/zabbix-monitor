@@ -1,15 +1,16 @@
-version: '3.8'
-
 services:
+  # -----------------------------------------------------------------
+  # PostgreSQL
+  # -----------------------------------------------------------------
   db:
     image: postgres:13-alpine
     container_name: zabbix-monitor-db
     environment:
-      POSTGRES_MULTIPLE_DATABASES: zabbix_monitor,zabbix
       POSTGRES_USER: zabbix
       POSTGRES_PASSWORD: secret123
+      POSTGRES_DB: zabbix
     volumes:
-      - ./init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -20,6 +21,9 @@ services:
       timeout: 5s
       retries: 5
 
+  # -----------------------------------------------------------------
+  # Zabbix‑Server
+  # -----------------------------------------------------------------
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-6.0-latest
     container_name: zabbix-server
@@ -31,11 +35,22 @@ services:
     ports:
       - "10051:10051"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10051"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # -----------------------------------------------------------------
+  # Zabbix‑Web (кастомный образ)
+  # -----------------------------------------------------------------
   zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:alpine-6.0-latest
+    build:
+      context: .                     # корневая папка проекта
+      dockerfile: Dockerfile.zabbix-web
     container_name: zabbix-web
     environment:
       ZBX_SERVER_HOST: zabbix-server
@@ -47,10 +62,20 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - zabbix-server
-      - db
+      db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # -----------------------------------------------------------------
+  # Flask‑приложение (не меняем)
+  # -----------------------------------------------------------------
   web:
     build: ./app
     container_name: zabbix-monitor-web
@@ -63,10 +88,13 @@ services:
       - ZABBIX_USER=Admin
       - ZABBIX_PASSWORD=zabbix
     depends_on:
-      - db
-      - zabbix-server
-      - zabbix-web
+      db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+      zabbix-web:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  postgres_data: {}

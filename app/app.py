@@ -1,8 +1,9 @@
 import os
+import datetime
 from flask import Flask, jsonify, request
+from sqlalchemy import text
 from models import db, Project
 from zabbix_client import ZabbixClient
-import datetime
 
 app = Flask(__name__)
 
@@ -28,11 +29,11 @@ def index():
 @app.route('/api/health')
 def health():
     try:
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         db_status = 'connected'
     except Exception as e:
         db_status = f'error: {str(e)}'
-    
+
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.datetime.utcnow().isoformat(),
@@ -62,28 +63,36 @@ def create_project():
     db.session.add(project)
     db.session.commit()
 
-    # Создаём хост в Zabbix
+    # Формируем данные для создания хоста в Zabbix
     host_data = {
         'host': data['name'].lower().replace(' ', '_'),
         'name': data['name'],
         'interfaces': [{
-            'type': 1,  # Zabbix agent
+            'type': 1,          # Zabbix agent
             'main': 1,
             'useip': 1,
-            'ip': '127.0.0.1',  # В реальности IP нужно получать
+            'ip': '127.0.0.1',
             'dns': '',
             'port': '10050'
         }],
-        'groups': [{'groupid': '2'}],  # Linux servers (обычно groupid=2)
-        'templates': [{'templateid': '10001'}]  # Template OS Linux by Zabbix agent
+        'groups': [{'name': 'Linux servers'}],               # используем имя группы
+        'templates': [{'name': 'Template OS Linux by Zabbix agent'}]  # имя шаблона
     }
+
     host_id = zabbix_client.create_host(host_data)
     if host_id:
         project.zabbix_host_id = host_id
         db.session.commit()
-        return jsonify({'id': project.id, 'zabbix_host_id': host_id, 'message': 'Project created with Zabbix host'}), 201
+        return jsonify({
+            'id': project.id,
+            'zabbix_host_id': host_id,
+            'message': 'Project created with Zabbix host'
+        }), 201
     else:
-        return jsonify({'id': project.id, 'message': 'Project created but failed to create Zabbix host'}), 201
+        return jsonify({
+            'id': project.id,
+            'message': 'Project created but failed to create Zabbix host'
+        }), 201
 
-if __name__ == '__main__':
+if name == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

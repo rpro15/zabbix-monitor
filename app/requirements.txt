@@ -1,5 +1,5 @@
 Flask==2.3.3
 gunicorn==21.2.0
-py-zabbix==1.1.7
+pyzabbix==1.3.1          # ← последняя версия, доступная в PyPI
 psycopg2-binary==2.9.9
 flask-sqlalchemy==3.0.5
