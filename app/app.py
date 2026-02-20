@@ -33,17 +33,27 @@ scheduler = BackgroundScheduler()
 connection_state = ConnectionStateManager()
 
 # Initialize Zabbix services
-zabbix_client = ZabbixClient(
-    url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
-    username=os.getenv('ZABBIX_USER', 'Admin'),
-    password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
-)
+try:
+    zabbix_client = ZabbixClient(
+        url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
+        username=os.getenv('ZABBIX_USER', 'Admin'),
+        password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
+    )
+    logger.info("✓ Old ZabbixClient initialized")
+except Exception as e:
+    logger.warning(f"Warning: Could not initialize old ZabbixClient: {e}")
+    zabbix_client = None
 
-zabbix_service = ZabbixService(
-    url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
-    username=os.getenv('ZABBIX_USER', 'Admin'),
-    password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
-)
+try:
+    zabbix_service = ZabbixService(
+        url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
+        username=os.getenv('ZABBIX_USER', 'Admin'),
+        password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
+    )
+    logger.info("✓ New ZabbixService initialized")
+except Exception as e:
+    logger.warning(f"Warning: Could not initialize ZabbixService: {e}")
+    zabbix_service = None
 
 # Initialize database tables
 with app.app_context():
@@ -59,16 +69,21 @@ def start_scheduler():
         # Alert polling task - runs every 2 seconds (configurable via env)
         polling_interval = int(os.getenv('POLLING_INTERVAL_SECONDS', 2))
         
-        scheduler.add_job(
-            func=poll_alerts_task,
-            args=(zabbix_service, AlertService, connection_state),
-            trigger='interval',
-            seconds=polling_interval,
-            id='alert_polling',
-            name='Alert Polling Task',
-            replace_existing=True,
-            max_instances=1
-        )
+        # Only add polling job if Zabbix service is available
+        if zabbix_service:
+            scheduler.add_job(
+                func=poll_alerts_task,
+                args=(zabbix_service, AlertService, connection_state),
+                trigger='interval',
+                seconds=polling_interval,
+                id='alert_polling',
+                name='Alert Polling Task',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✓ Alert polling task scheduled")
+        else:
+            logger.warning("⚠ Zabbix service unavailable, alert polling task disabled")
         
         # Cleanup task - runs daily at 2 AM
         scheduler.add_job(
@@ -87,13 +102,12 @@ def start_scheduler():
         logger.info("✓ Background scheduler started")
 
 
-@app.before_first_request
-def setup():
-    """Setup before first request - start scheduler"""
-    try:
-        start_scheduler()
-    except Exception as e:
-        logger.error(f"Error starting scheduler: {str(e)}")
+# Initialize scheduler on module load (replaces deprecated before_first_request)
+try:
+    start_scheduler()
+    logger.info("✓ Scheduler initialized on app startup")
+except Exception as e:
+    logger.error(f"Error starting scheduler on startup: {str(e)}")
 
 
 # ============ Routes ============
@@ -112,7 +126,11 @@ def health():
     except Exception as e:
         db_status = f'error: {str(e)}'
     
-    zabbix_status = zabbix_service.get_status()
+    if zabbix_service:
+        zabbix_status = zabbix_service.get_status()
+    else:
+        zabbix_status = {'connected': False, 'error': 'Service not initialized'}
+    
     scheduler_status = 'running' if scheduler.running else 'stopped'
     
     return jsonify({
@@ -148,28 +166,32 @@ def create_project():
     db.session.add(project)
     db.session.commit()
 
-    # Создаём хост в Zabbix
-    host_data = {
-        'host': data['name'].lower().replace(' ', '_'),
-        'name': data['name'],
-        'interfaces': [{
-            'type': 1,  # Zabbix agent
-            'main': 1,
-            'useip': 1,
-            'ip': '127.0.0.1',  # В реальности IP нужно получать
-            'dns': '',
-            'port': '10050'
-        }],
-        'groups': [{'groupid': '2'}],  # Linux servers (обычно groupid=2)
-        'templates': [{'templateid': '10001'}]  # Template OS Linux by Zabbix agent
-    }
-    host_id = zabbix_client.create_host(host_data)
-    if host_id:
-        project.zabbix_host_id = host_id
-        db.session.commit()
-        return jsonify({'id': project.id, 'zabbix_host_id': host_id, 'message': 'Project created with Zabbix host'}), 201
-    else:
-        return jsonify({'id': project.id, 'message': 'Project created but failed to create Zabbix host'}), 201
+    # Create host in Zabbix if client available
+    if zabbix_client:
+        try:
+            host_data = {
+                'host': data['name'].lower().replace(' ', '_'),
+                'name': data['name'],
+                'interfaces': [{
+                    'type': 1,  # Zabbix agent
+                    'main': 1,
+                    'useip': 1,
+                    'ip': '127.0.0.1',  # In practice, IP should be obtained
+                    'dns': '',
+                    'port': '10050'
+                }],
+                'groups': [{'groupid': '2'}],  # Linux servers (usually groupid=2)
+                'templates': [{'templateid': '10001'}]  # Template OS Linux by Zabbix agent
+            }
+            host_id = zabbix_client.create_host(host_data)
+            if host_id:
+                project.zabbix_host_id = host_id
+                db.session.commit()
+                return jsonify({'id': project.id, 'zabbix_host_id': host_id, 'message': 'Project created with Zabbix host'}), 201
+        except Exception as e:
+            logger.warning(f"Failed to create Zabbix host: {e}")
+    
+    return jsonify({'id': project.id, 'message': 'Project created (Zabbix host creation skipped)'}), 201
 
 
 # ============ WebSocket Handlers ============
