@@ -3,3 +3,7 @@ gunicorn==21.2.0
 py-zabbix==1.1.7
 psycopg2-binary==2.9.9
 flask-sqlalchemy==3.0.5
+flask-socketio==5.3.4
+python-socketio==5.9.0
+APScheduler==3.10.4
+alembic==1.12.1

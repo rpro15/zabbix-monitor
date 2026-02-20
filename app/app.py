@@ -1,44 +1,130 @@
 import os
+import logging
 from flask import Flask, jsonify, request
+from flask_socketio import SocketIO, emit, disconnect
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
+
 from models import db, Project
 from zabbix_client import ZabbixClient
-import datetime
+from services.alert_service import AlertService, ConnectionStateManager
+from services.zabbix_service import ZabbixService
+from tasks.alert_poller import poll_alerts_task, cleanup_old_alerts_task
+from api.alerts import alerts_bp
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///local.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Initialize database
 db.init_app(app)
 
-# Инициализация Zabbix клиента
+# Initialize Flask-SocketIO for real-time updates
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# Initialize background scheduler
+scheduler = BackgroundScheduler()
+
+# Initialize connection state manager
+connection_state = ConnectionStateManager()
+
+# Initialize Zabbix services
 zabbix_client = ZabbixClient(
     url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
     username=os.getenv('ZABBIX_USER', 'Admin'),
     password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
 )
 
+zabbix_service = ZabbixService(
+    url=os.getenv('ZABBIX_URL', 'http://zabbix-web:8080/api_jsonrpc.php'),
+    username=os.getenv('ZABBIX_USER', 'Admin'),
+    password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
+)
+
+# Initialize database tables
 with app.app_context():
     db.create_all()
 
+# Register blueprints
+app.register_blueprint(alerts_bp)
+
+# Configure and start scheduler
+def start_scheduler():
+    """Start background scheduler for alert polling"""
+    if not scheduler.running:
+        # Alert polling task - runs every 2 seconds (configurable via env)
+        polling_interval = int(os.getenv('POLLING_INTERVAL_SECONDS', 2))
+        
+        scheduler.add_job(
+            func=poll_alerts_task,
+            args=(zabbix_service, AlertService, connection_state),
+            trigger='interval',
+            seconds=polling_interval,
+            id='alert_polling',
+            name='Alert Polling Task',
+            replace_existing=True,
+            max_instances=1
+        )
+        
+        # Cleanup task - runs daily at 2 AM
+        scheduler.add_job(
+            func=cleanup_old_alerts_task,
+            args=(AlertService, 30),  # 30-day retention
+            trigger='cron',
+            hour=2,
+            minute=0,
+            id='alert_cleanup',
+            name='Alert Cleanup Task',
+            replace_existing=True,
+            max_instances=1
+        )
+        
+        scheduler.start()
+        logger.info("✓ Background scheduler started")
+
+
+@app.before_first_request
+def setup():
+    """Setup before first request - start scheduler"""
+    try:
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"Error starting scheduler: {str(e)}")
+
+
+# ============ Routes ============
+
 @app.route('/')
 def index():
-    return "<h1>Zabbix Monitor</h1><p>It works with DB and Zabbix!</p>"
+    return "<h1>Zabbix Monitor - Real-time Alerts</h1><p>Service running</p>"
+
 
 @app.route('/api/health')
 def health():
+    """System health check endpoint"""
     try:
         db.session.execute('SELECT 1')
         db_status = 'connected'
     except Exception as e:
         db_status = f'error: {str(e)}'
     
+    zabbix_status = zabbix_service.get_status()
+    scheduler_status = 'running' if scheduler.running else 'stopped'
+    
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.datetime.utcnow().isoformat(),
+        'timestamp': datetime.utcnow().isoformat(),
         'service': 'zabbix-monitor',
-        'database': db_status
-    })
+        'database': db_status,
+        'scheduler': scheduler_status,
+        'zabbix': zabbix_status,
+        'connection_state': connection_state.get_status()
+    }), 200
+
 
 @app.route('/api/projects', methods=['GET'])
 def get_projects():
@@ -85,5 +171,60 @@ def create_project():
     else:
         return jsonify({'id': project.id, 'message': 'Project created but failed to create Zabbix host'}), 201
 
+
+# ============ WebSocket Handlers ============
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    logger.info(f"Client connected: {request.sid}")
+    
+    # Send current connection status
+    emit('connection_status', connection_state.get_status())
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection"""
+    logger.info(f"Client disconnected: {request.sid}")
+
+
+def broadcast_new_alert(alert_data):
+    """
+    Broadcast new alert to all connected clients via WebSocket.
+    
+    Called when a new alert is fetched from Zabbix.
+    
+    Args:
+        alert_data: Dictionary with alert information
+    """
+    try:
+        socketio.emit(
+            'new_alert',
+            {'data': alert_data, 'timestamp': datetime.utcnow().isoformat()},
+            namespace='/'
+        )
+        logger.debug(f"Broadcasted alert: {alert_data.get('id')}")
+    except Exception as e:
+        logger.error(f"Error broadcasting alert: {str(e)}")
+
+
+def broadcast_connection_status(status: dict):
+    """
+    Broadcast connection status to all clients.
+    
+    Args:
+        status: Dictionary with connection status
+    """
+    try:
+        socketio.emit(
+            'connection_status',
+            status,
+            namespace='/'
+        )
+    except Exception as e:
+        logger.error(f"Error broadcasting status: {str(e)}")
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
