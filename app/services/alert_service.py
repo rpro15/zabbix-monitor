@@ -7,6 +7,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Global reference for Zabbix service (will be set during app initialization)
+_zabbix_service = None
+
+def set_zabbix_service(zabbix_service):
+    """Set global Zabbix service reference for acknowledgment sync"""
+    global _zabbix_service
+    _zabbix_service = zabbix_service
+
 
 class AlertService:
     """Service for managing alerts - creation, updates, filtering, deduplication"""
@@ -193,7 +201,9 @@ class AlertService:
         reason: Optional[str] = None
     ) -> Optional[AlertAcknowledgment]:
         """
-        Acknowledge an alert.
+        Acknowledge an alert (both locally and in Zabbix if available).
+        
+        T020: Syncs acknowledgment back to Zabbix API via event.acknowledge()
         
         Args:
             alert_id: Alert ID
@@ -209,6 +219,11 @@ class AlertService:
                 logger.warning(f"Alert not found: {alert_id}")
                 return None
             
+            # Skip if already acknowledged
+            if alert.status == AlertStatus.ACKNOWLEDGED.value:
+                logger.info(f"Alert {alert_id} already acknowledged, skipping")
+                return None
+            
             # Create acknowledgment record
             ack = AlertAcknowledgment(
                 alert_id=alert_id,
@@ -217,13 +232,14 @@ class AlertService:
             )
             
             # Update alert status
+            old_status = alert.status
             alert.status = AlertStatus.ACKNOWLEDGED.value
             alert.last_updated_at = datetime.utcnow()
             
             # Record in history
             history = AlertHistory(
                 alert_id=alert_id,
-                status_change_from=AlertStatus.NEW.value,
+                status_change_from=old_status,
                 status_change_to=AlertStatus.ACKNOWLEDGED.value,
                 changed_by=operator_name,
                 reason=reason
@@ -233,7 +249,34 @@ class AlertService:
             db.session.add(history)
             db.session.commit()
             
-            logger.info(f"Alert {alert_id} acknowledged by {operator_name}")
+            logger.info(f"Alert {alert_id} acknowledged by {operator_name} (local)")
+            
+            # T020: Sync acknowledgment back to Zabbix if service available
+            if _zabbix_service and alert.zabbix_event_id:
+                try:
+                    ack_message = f"Acknowledged by {operator_name}"
+                    if reason:
+                        ack_message += f": {reason}"
+                    
+                    zabbix_result = _zabbix_service.acknowledge_event(
+                        eventid=alert.zabbix_event_id,
+                        message=ack_message,
+                        username=operator_name
+                    )
+                    
+                    if zabbix_result:
+                        # Mark as synced to Zabbix
+                        ack.synced_to_zabbix = True
+                        db.session.commit()
+                        logger.info(f"Alert {alert_id} synced to Zabbix (event {alert.zabbix_event_id})")
+                    else:
+                        logger.warning(f"Failed to sync acknowledgment to Zabbix for event {alert.zabbix_event_id}")
+                except Exception as e:
+                    logger.error(f"Error syncing to Zabbix: {str(e)}")
+                    # Don't fail - local acknowledgment still succeeded
+            else:
+                logger.debug("Zabbix service unavailable, skipping sync")
+            
             return ack
         except Exception as e:
             db.session.rollback()

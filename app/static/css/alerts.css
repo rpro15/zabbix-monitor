@@ -161,6 +161,32 @@ body {
     cursor: not-allowed;
 }
 
+.btn:disabled:hover {
+    background-color: inherit;
+    box-shadow: none;
+}
+
+/* Action Buttons */
+.btn-acknowledge {
+    background-color: #4caf50;
+    color: white;
+}
+
+.btn-acknowledge:hover:not(:disabled) {
+    background-color: #45a049;
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+}
+
+.btn-acknowledge:disabled {
+    background-color: #bdbdbd;
+    cursor: not-allowed;
+}
+
+.btn-acknowledge.acknowledged {
+    background-color: #9e9e9e;
+    cursor: default;
+}
+
 /* Alerts Container */
 .alerts-container {
     margin-bottom: 20px;
@@ -518,4 +544,53 @@ body {
 
 .mb-20 {
     margin-bottom: 20px;
+}
+
+/* Success/Error Toast Notifications */
+@keyframes slideInRight {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+}
+
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 4px;
+    font-weight: 500;
+    z-index: 2000;
+    animation: slideInRight 0.3s ease;
+}
+
+.toast.success {
+    background-color: #4caf50;
+    color: white;
+}
+
+.toast.error {
+    background-color: #f44336;
+    color: white;
+}
+
+.toast.warning {
+    background-color: #ff9800;
+    color: white;
 }

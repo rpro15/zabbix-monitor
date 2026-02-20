@@ -7,10 +7,10 @@ from datetime import datetime
 
 from models import db, Project
 from zabbix_client import ZabbixClient
-from services.alert_service import AlertService, ConnectionStateManager
+from services.alert_service import AlertService, ConnectionStateManager, set_zabbix_service
 from services.zabbix_service import ZabbixService
 from tasks.alert_poller import poll_alerts_task, cleanup_old_alerts_task
-from api.alerts import alerts_bp
+from api.alerts import alerts_bp, set_socketio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +25,9 @@ db.init_app(app)
 
 # Initialize Flask-SocketIO for real-time updates
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# Set global SocketIO reference for alert API (T022)
+set_socketio(socketio)
 
 # Initialize background scheduler
 scheduler = BackgroundScheduler()
@@ -51,9 +54,12 @@ try:
         password=os.getenv('ZABBIX_PASSWORD', 'zabbix')
     )
     logger.info("✓ New ZabbixService initialized")
+    # Set global reference for AlertService to use for Zabbix sync (T020)
+    set_zabbix_service(zabbix_service)
 except Exception as e:
     logger.warning(f"Warning: Could not initialize ZabbixService: {e}")
     zabbix_service = None
+    set_zabbix_service(None)
 
 # Initialize database tables
 with app.app_context():

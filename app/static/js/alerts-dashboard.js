@@ -130,6 +130,13 @@ class AlertDashboard {
                 // Could show toast notification here
             });
 
+            // Listen for alert acknowledgments from other operators
+            this.socket.on('alert_acknowledged', (data) => {
+                console.log(`Alert ${data.alert_id} acknowledged by ${data.operator_name}`);
+                // Refresh alert list to reflect new acknowledgment
+                this.loadAlerts();
+            });
+
         } catch (error) {
             console.error('Failed to initialize WebSocket:', error);
             this.useWebSocket = false;
@@ -378,28 +385,65 @@ class AlertDashboard {
     acknowledgeAlert() {
         if (!this.selectedAlert) return;
 
-        const reason = prompt('Enter acknowledgment reason:');
-        if (reason === null) return;
+        // Already acknowledged
+        if (this.selectedAlert.status === 'acknowledged' || this.selectedAlert.status === 'resolved') {
+            alert('Alert is already ' + this.selectedAlert.status);
+            return;
+        }
+
+        const reason = prompt('Enter acknowledgment reason (optional):');
+        if (reason === null) return; // User cancelled
+
+        const ackBtn = document.getElementById('acknowledge-btn');
+        ackBtn.disabled = true;
+        ackBtn.textContent = 'Acknowledging...';
 
         fetch(`/api/alerts/${this.selectedAlert.id}/acknowledge`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                operator_name: 'Web User', // TODO: get from session
-                reason: reason
+                operator_name: 'Web User', // TODO: get from session/auth
+                reason: reason || ''
             })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 console.log('Alert acknowledged successfully');
-                this.closeModal();
-                this.loadAlerts();
+                // Update the selected alert with new status
+                this.selectedAlert.status = 'acknowledged';
+                
+                // Show success message
+                const successMsg = document.createElement('div');
+                successMsg.style.cssText = `
+                    position: fixed; top: 20px; right: 20px;
+                    background: #4caf50; color: white;
+                    padding: 15px 20px; border-radius: 4px;
+                    font-weight: 500; z-index: 2000;
+                    animation: slideInRight 0.3s ease;
+                `;
+                successMsg.textContent = 'Alert acknowledged successfully!';
+                document.body.appendChild(successMsg);
+                
+                // Auto-remove message
+                setTimeout(() => {
+                    successMsg.remove();
+                    this.closeModal();
+                    this.loadAlerts(); // Refresh list
+                }, 2000);
             } else {
-                alert('Failed to acknowledge alert: ' + data.error);
+                throw new Error(data.error || 'Failed to acknowledge alert');
             }
         })
-        .catch(error => console.error('Error acknowledging alert:', error));
+        .catch(error => {
+            console.error('Error acknowledging alert:', error);
+            alert('Failed to acknowledge alert: ' + error.message);
+            ackBtn.disabled = false;
+            ackBtn.textContent = 'Acknowledge';
+        });
     }
 
     /**

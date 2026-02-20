@@ -1,6 +1,7 @@
 """Alert API endpoints - Flask blueprint"""
 
 from flask import Blueprint, jsonify, request
+from flask_socketio import emit
 from datetime import datetime
 from services.alert_service import AlertService
 from models import Alert, AlertAcknowledgment, AlertHistory
@@ -10,6 +11,14 @@ logger = logging.getLogger(__name__)
 
 # Create blueprint
 alerts_bp = Blueprint('alerts', __name__, url_prefix='/api/alerts')
+
+# Global SocketIO reference (will be set by app.py)
+_socketio = None
+
+def set_socketio(socketio):
+    """Set global SocketIO reference for WebSocket broadcasting"""
+    global _socketio
+    _socketio = socketio
 
 
 @alerts_bp.route('', methods=['GET'])
@@ -81,7 +90,9 @@ def get_alert(alert_id):
 @alerts_bp.route('/<alert_id>/acknowledge', methods=['POST'])
 def acknowledge_alert(alert_id):
     """
-    Acknowledge an alert.
+    Acknowledge an alert (T018, T023).
+    
+    T020: Syncs acknowledgment back to Zabbix API.
     
     Request Body:
         - operator_name: Name of operator acknowledging (optional, can be from session)
@@ -90,7 +101,7 @@ def acknowledge_alert(alert_id):
     try:
         data = request.get_json() or {}
         
-        # Get operator name from request, session, or auth header
+        # Get operator name from request, session, or auth header (T023)
         operator_name = (
             data.get('operator_name') or
             request.headers.get('X-Operator-Name') or
@@ -98,15 +109,35 @@ def acknowledge_alert(alert_id):
         )
         reason = data.get('reason', None)
         
-        # Acknowledge alert
+        # Acknowledge alert (T019: creates AlertAcknowledgment record, T024: creates AlertHistory)
+        # T020: Also syncs to Zabbix if service available
         ack = AlertService.acknowledge_alert(alert_id, operator_name, reason)
         if not ack:
-            return jsonify({'success': False, 'error': 'Failed to acknowledge alert'}), 400
+            return jsonify({'success': False, 'error': 'Failed to acknowledge alert or already acknowledged'}), 400
         
         alert = Alert.query.get(alert_id)
+        
+        # Broadcast acknowledgment to all WebSocket clients
+        if _socketio and alert:
+            try:
+                _socketio.emit(
+                    'alert_acknowledged',
+                    {
+                        'alert_id': alert_id,
+                        'operator_name': operator_name,
+                        'reason': reason,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'new_status': alert.status
+                    },
+                    namespace='/'
+                )
+                logger.debug(f"Broadcasted acknowledgment for alert {alert_id}")
+            except Exception as e:
+                logger.error(f"Error broadcasting acknowledgment: {str(e)}")
+        
         return jsonify({
             'success': True,
-            'message': 'Alert acknowledged',
+            'message': 'Alert acknowledged successfully',
             'data': {
                 'alert': alert.to_dict() if alert else None,
                 'acknowledgment': ack.to_dict()
