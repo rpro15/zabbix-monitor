@@ -42,7 +42,7 @@ class Alert(db.Model):
     zabbix_problem_id = db.Column(db.String(50), nullable=True)
     host = db.Column(db.String(255), nullable=False, index=True)
     alert_name = db.Column(db.String(500), nullable=False)
-    severity = db.Column(db.Integer, nullable=False)  # 0-5, maps to AlertSeverity
+    severity = db.Column(db.Integer, nullable=False, index=True)  # 0-5, maps to AlertSeverity (indexed for filtering)
     status = db.Column(db.String(20), nullable=False, default=AlertStatus.NEW.value, index=True)
     timestamp = db.Column(db.DateTime, nullable=False)  # When alert triggered in Zabbix
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
