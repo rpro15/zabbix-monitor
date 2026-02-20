@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 # Global reference for Zabbix service (will be set during app initialization)
 _zabbix_service = None
+# Global reference for Telegram service (will be set during app initialization)
+_telegram_service = None
 
 def set_zabbix_service(zabbix_service):
     """Set global Zabbix service reference for acknowledgment sync"""
@@ -16,11 +18,17 @@ def set_zabbix_service(zabbix_service):
     _zabbix_service = zabbix_service
 
 
+def set_telegram_service(telegram_service):
+    """Set global Telegram service reference for notifications"""
+    global _telegram_service
+    _telegram_service = telegram_service
+
+
 class AlertService:
     """Service for managing alerts - creation, updates, filtering, deduplication"""
 
     @staticmethod
-    def store_alerts(alerts_data: List[Dict[str, Any]]) -> Dict[str, int]:
+    def store_alerts(alerts_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Store alerts from Zabbix API response, with advanced deduplication by zabbix_event_id.
         
@@ -33,9 +41,18 @@ class AlertService:
             alerts_data: List of alert dictionaries from Zabbix API
             
         Returns:
-            Dictionary with counts: {'created': int, 'updated': int, 'skipped': int, 'duplicates': int}
+            Dictionary with counts and IDs:
+            {'created': int, 'updated': int, 'skipped': int, 'duplicates': int,
+             'created_ids': List[str], 'updated_ids': List[str]}
         """
-        counts = {'created': 0, 'updated': 0, 'skipped': 0, 'duplicates': 0}
+        counts = {
+            'created': 0,
+            'updated': 0,
+            'skipped': 0,
+            'duplicates': 0,
+            'created_ids': [],
+            'updated_ids': []
+        }
         
         if not alerts_data:
             logger.debug("No alerts to process")
@@ -96,6 +113,7 @@ class AlertService:
                         )
                     
                     counts['updated'] += 1
+                    counts['updated_ids'].append(existing.id)
                 else:
                     # Create new alert
                     try:
@@ -111,6 +129,7 @@ class AlertService:
                         )
                         db.session.add(alert)
                         counts['created'] += 1
+                        counts['created_ids'].append(alert.id)
                         logger.info(
                             f"Alert created: eventid={event_id}, "
                             f"host={alert.host}, severity={alert.severity}"
@@ -133,6 +152,13 @@ class AlertService:
             counts['skipped'] = len(alerts_data) - counts['created'] - counts['updated']
         
         return counts
+
+    @staticmethod
+    def get_alerts_by_ids(alert_ids: List[str]) -> List[Alert]:
+        """Fetch alerts by a list of IDs."""
+        if not alert_ids:
+            return []
+        return Alert.query.filter(Alert.id.in_(alert_ids)).all()
 
     @staticmethod
     def get_all_alerts(status: Optional[str] = None, severity: Optional[int] = None) -> List[Alert]:
@@ -250,6 +276,12 @@ class AlertService:
             db.session.commit()
             
             logger.info(f"Alert {alert_id} acknowledged by {operator_name} (local)")
+
+            if _telegram_service:
+                try:
+                    _telegram_service.notify_ack(alert, operator_name, reason)
+                except Exception as e:
+                    logger.error(f"Telegram notify failed for ack {alert_id}: {str(e)}")
             
             # T020: Sync acknowledgment back to Zabbix if service available
             if _zabbix_service and alert.zabbix_event_id:
@@ -317,6 +349,12 @@ class AlertService:
             db.session.commit()
             
             logger.info(f"Alert {alert_id} resolved")
+
+            if _telegram_service:
+                try:
+                    _telegram_service.notify_resolved(alert)
+                except Exception as e:
+                    logger.error(f"Telegram notify failed for resolve {alert_id}: {str(e)}")
             return True
         except Exception as e:
             db.session.rollback()

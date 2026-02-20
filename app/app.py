@@ -7,8 +7,9 @@ from datetime import datetime
 
 from models import db, Project
 from zabbix_client import ZabbixClient
-from services.alert_service import AlertService, ConnectionStateManager, set_zabbix_service
+from services.alert_service import AlertService, ConnectionStateManager, set_zabbix_service, set_telegram_service
 from services.zabbix_service import ZabbixService
+from services.telegram_service import TelegramService
 from tasks.alert_poller import poll_alerts_task, cleanup_old_alerts_task
 from api.alerts import alerts_bp, set_socketio
 
@@ -61,6 +62,25 @@ except Exception as e:
     zabbix_service = None
     set_zabbix_service(None)
 
+# Initialize Telegram service (optional)
+telegram_service = None
+telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+telegram_chat_ids = os.getenv('TELEGRAM_CHAT_IDS')
+telegram_format = os.getenv('TELEGRAM_MESSAGE_FORMAT', 'short')
+app_base_url = os.getenv('APP_BASE_URL')
+
+if telegram_token and telegram_chat_ids:
+    telegram_service = TelegramService(
+        token=telegram_token,
+        chat_ids=telegram_chat_ids,
+        message_format=telegram_format,
+        base_url=app_base_url
+    )
+    set_telegram_service(telegram_service)
+    logger.info("✓ Telegram notifications enabled")
+else:
+    set_telegram_service(None)
+
 # Initialize database tables
 with app.app_context():
     db.create_all()
@@ -78,7 +98,13 @@ def start_scheduler():
         def poll_with_context():
             """Run polling inside Flask application context."""
             with app.app_context():
-                return poll_alerts_task(zabbix_service, AlertService, connection_state, socketio)
+                return poll_alerts_task(
+                    zabbix_service,
+                    AlertService,
+                    connection_state,
+                    socketio,
+                    telegram_service
+                )
 
         def cleanup_with_context():
             """Run cleanup inside Flask application context."""

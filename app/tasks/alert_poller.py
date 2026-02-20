@@ -19,7 +19,7 @@ polling_metrics = {
 }
 
 
-def poll_alerts_task(zabbix_service, alert_service, connection_state, socketio=None):
+def poll_alerts_task(zabbix_service, alert_service, connection_state, socketio=None, telegram_service=None):
     """
     Background task to poll Zabbix API for new/updated alerts.
     
@@ -32,6 +32,7 @@ def poll_alerts_task(zabbix_service, alert_service, connection_state, socketio=N
         alert_service: AlertService instance
         connection_state: ConnectionStateManager instance
         socketio: Flask-SocketIO instance (optional, for WebSocket broadcast)
+        telegram_service: TelegramService instance (optional, for notifications)
     
     Returns:
         Dictionary with poll results or None on failure
@@ -69,6 +70,15 @@ def poll_alerts_task(zabbix_service, alert_service, connection_state, socketio=N
                     logger.debug(f"Broadcasted {result['created']} new alerts to WebSocket clients")
                 except Exception as e:
                     logger.error(f"Error broadcasting alerts via WebSocket: {str(e)}")
+
+            # Notify Telegram for newly created alerts
+            if telegram_service and result['created'] > 0:
+                try:
+                    created_alerts = alert_service.get_alerts_by_ids(result.get('created_ids', []))
+                    for alert in created_alerts:
+                        telegram_service.notify_new_alert(alert)
+                except Exception as e:
+                    logger.error(f"Error sending Telegram notifications: {str(e)}")
             
             # Update polling metrics
             polling_metrics['successful_polls'] += 1

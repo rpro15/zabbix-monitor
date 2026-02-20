@@ -7,3 +7,4 @@ flask-socketio==5.3.4
 python-socketio==5.9.0
 APScheduler==3.10.4
 alembic==1.12.1
+requests==2.31.0
