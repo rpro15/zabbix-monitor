@@ -17,6 +17,34 @@ Real-time monitoring dashboard for Zabbix alerts with acknowledgments, filtering
 - Docker and Docker Compose
 - Ports available: 5000 (web), 5432 (Postgres), 8080 (Zabbix web), 10051 (Zabbix server)
 
+### Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone <repo-url>
+   cd zabbix-monitor
+   ```
+
+2. **Configure environment** (optional for Telegram)
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Edit `.env` and set:
+   - `TELEGRAM_BOT_TOKEN` - Get from [@BotFather](https://t.me/BotFather)
+   - `TELEGRAM_CHAT_IDS` - Your chat ID(s), comma-separated
+   
+   To get chat_id:
+   ```bash
+   # Add bot to chat, send any message, then:
+   curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates" | jq '.result[].message.chat.id'
+   ```
+
+3. **Run**
+   ```bash
+   docker compose up --build
+   ```
+
 ### Run with Docker Compose
 
 ```bash
@@ -91,6 +119,34 @@ python test_build_phase7.py
 ### Требования
 - Docker и Docker Compose
 - Свободные порты: 5000 (web), 5432 (Postgres), 8080 (Zabbix web), 10051 (Zabbix server)
+
+### Настройка
+
+1. **Клонировать репозиторий**
+   ```bash
+   git clone <repo-url>
+   cd zabbix-monitor
+   ```
+
+2. **Настроить окружение** (опционально для Telegram)
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Отредактировать `.env`:
+   - `TELEGRAM_BOT_TOKEN` - получить у [@BotFather](https://t.me/BotFather)
+   - `TELEGRAM_CHAT_IDS` - ID чатов через запятую
+   
+   Получить chat_id:
+   ```bash
+   # Добавить бота в чат, отправить сообщение, затем:
+   curl "https://api.telegram.org/bot<ВАШ_ТОКЕН>/getUpdates" | jq '.result[].message.chat.id'
+   ```
+
+3. **Запустить**
+   ```bash
+   docker compose up --build
+   ```
 
 ### Запуск через Docker Compose
 
