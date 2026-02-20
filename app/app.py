@@ -74,12 +74,21 @@ def start_scheduler():
     if not scheduler.running:
         # Alert polling task - runs every 2 seconds (configurable via env)
         polling_interval = int(os.getenv('POLLING_INTERVAL_SECONDS', 2))
+
+        def poll_with_context():
+            """Run polling inside Flask application context."""
+            with app.app_context():
+                return poll_alerts_task(zabbix_service, AlertService, connection_state, socketio)
+
+        def cleanup_with_context():
+            """Run cleanup inside Flask application context."""
+            with app.app_context():
+                return cleanup_old_alerts_task(AlertService, 30)
         
         # Only add polling job if Zabbix service is available
         if zabbix_service:
             scheduler.add_job(
-                func=poll_alerts_task,
-                args=(zabbix_service, AlertService, connection_state, socketio),
+                func=poll_with_context,
                 trigger='interval',
                 seconds=polling_interval,
                 id='alert_polling',
@@ -93,8 +102,7 @@ def start_scheduler():
         
         # Cleanup task - runs daily at 2 AM
         scheduler.add_job(
-            func=cleanup_old_alerts_task,
-            args=(AlertService, 30),  # 30-day retention
+            func=cleanup_with_context,
             trigger='cron',
             hour=2,
             minute=0,

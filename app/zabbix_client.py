@@ -6,6 +6,9 @@ logger = logging.getLogger(__name__)
 
 class ZabbixClient:
     def __init__(self, url: str, username: str, password: str):
+        # py-zabbix appends /api_jsonrpc.php automatically; avoid double path
+        if url.endswith('/api_jsonrpc.php'):
+            url = url[: -len('/api_jsonrpc.php')]
         self.url = url
         self.username = username
         self.password = password

@@ -20,6 +20,9 @@ class ZabbixService:
             username: Zabbix API username
             password: Zabbix API password
         """
+        # py-zabbix appends /api_jsonrpc.php automatically; avoid double path
+        if url.endswith('/api_jsonrpc.php'):
+            url = url[: -len('/api_jsonrpc.php')]
         self.url = url
         self.username = username
         self.password = password
@@ -39,7 +42,11 @@ class ZabbixService:
         """
         try:
             self.zabbix = ZabbixAPI(url=self.url)
-            self.zabbix.login(self.username, self.password)
+            response = self.zabbix.do_request('user.login', {
+                'user': self.username,
+                'password': self.password
+            })
+            self.zabbix.auth = response['result']
             self._authenticated = True
             logger.info("✓ Successfully authenticated with Zabbix API")
             return True
@@ -68,8 +75,6 @@ class ZabbixService:
                 output=['eventid', 'objectid', 'clock', 'severity', 'name'],
                 selectHosts=['host', 'hostid'],
                 recent=True,
-                sortfield=['clock'],
-                sortorder='DESC',
                 limit=1000
             )
             
