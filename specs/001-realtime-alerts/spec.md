@@ -101,9 +101,9 @@ Operators and system administrators need to review historical records of alerts 
 
 ### Functional Requirements
 
-- **FR-001**: System MUST establish a persistent, real-time connection to the Zabbix API to receive alert events immediately upon trigger (near-zero latency from Zabbix to application)
+- **FR-001**: System MUST establish a persistent, real-time connection to the Zabbix API to receive alert events immediately upon trigger with maximum polling interval of 2 seconds to achieve <2 second end-to-end latency
 - **FR-002**: System MUST display new alerts on the monitoring dashboard with visual distinction based on severity level (Critical/Red, High/Orange, Average/Yellow, Warning/Blue, Info/Gray)
-- **FR-003**: System MUST allow operators to acknowledge alerts and capture the operator name, timestamp, and acknowledgment reason
+- **FR-003**: System MUST allow operators to acknowledge alerts and capture the operator name (obtained from HTTP session/authentication context), timestamp, and acknowledgment reason
 - **FR-004**: System MUST display alert details including: affected host, alert name, severity, event timestamp, and current status (New/Acknowledged/Resolved)
 - **FR-005**: System MUST support filtering alerts by status (New, Acknowledged, Resolved) and severity level
 - **FR-006**: System MUST store alert history with complete lifecycle tracking (creation time, acknowledgment time with operator, resolution time)
@@ -140,13 +140,15 @@ Operators and system administrators need to review historical records of alerts 
 
 ### Assumptions
 
-- Zabbix API v4.0 or later is available and accessible from the application
+- Zabbix API v4.0 or later is available and accessible from the application, with polling capability supporting 1-2 second intervals
 - Zabbix authentication credentials (API token or user/password) are securely configured and available to the application
 - An existing monitoring dashboard UI is in place and can be extended with alert notifications
 - Operators have basic familiarity with Zabbix severity levels and alert concepts
 - Network connectivity between the application and Zabbix is stable; intermittent failures are expected and must be handled gracefully
-- Historical alert data will be retained for at least 30 days in the application database
+- Historical alert data will be retained for at least 30 days in the application database (rolling 30-day window)
 - Alert acknowledgments made in the application should be synchronized back to Zabbix to maintain consistency
+- Operator identification will be obtained from the HTTP session/authentication context (Flask session or auth header)
+- All alert acknowledgments made in the application MUST be synced back to Zabbix to maintain consistency
 
 ### Constraints
 

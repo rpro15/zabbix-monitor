@@ -113,53 +113,92 @@ app/
 - Set up background scheduler (APScheduler)
 - Add dependencies to requirements.txt
 
-### Phase 2: Core Alert Retrieval (P1 - US1)
-- Implement ZabbixService.fetch_new_alerts() method
-- Background task to poll Zabbix every N seconds
-- Store alerts in local database with deduplication by event_id
-- Implement alert status transitions (New → Resolved)
-- Create /api/alerts GET endpoint to retrieve current alerts
-- WebSocket event broadcast when new alert arrives
+### Phase 2: Foundational & Blocking Prerequisites
+- Implement ZabbixService with Zabbix API integration and polling (1-2 second interval)
+- Background task to poll Zabbix and store alerts with deduplication by event_id
+- Initialize APScheduler and connection state manager
+- Create Flask blueprint and alert API infrastructure
 
-### Phase 3: Alert Acknowledgment (P2 - US2)
-- Create AlertAcknowledgment model and database table
+### Phase 3: User Story 1 - View Real-time Alerts on Dashboard (P1)
+- Implement GET /api/alerts endpoint to retrieve current alerts
+- WebSocket broadcast infrastructure for real-time updates
+- Alert dashboard UI (alerts.html template)
+- Frontend WebSocket client and real-time rendering
+- Severity color-coding and alert detail modal
+- HTTP polling fallback for non-WebSocket clients
+
+### Phase 4: User Story 2 - Acknowledge and Clear Alerts (P2)
 - Implement POST /api/alerts/{id}/acknowledge endpoint
-- Logic to sync acknowledgment back to Zabbix via event.acknowledge()
-- Update alert status in dashboard when acknowledged
-- Capture operator name (from HTTP header, session, or request body)
+- AlertAcknowledgment record creation and storage
+- Zabbix sync logic to acknowledge events back to Zabbix
+- Operator name capture from session/auth context
+- Alert status updates and UI styling for acknowledged state
+- AlertHistory records for all status transitions
 
-### Phase 4: Filtering & Search (P3 - US3)
-- Enhance GET /api/alerts with query parameters:
-  - `status` filter (new, acknowledged, resolved)
-  - `severity` filter (Critical, High, Average, etc.)
-  - `host` search/filter
-  - `name` search
-- Frontend UI filters that call enhanced API
+### Phase 5: User Story 3 - Filter and Search Alerts (P3)
+- Enhance GET /api/alerts with query parameters (status, severity, host, search)
+- Filtering logic in AlertService for accurate subset retrieval
+- Frontend filter UI controls and search input
+- Database indexes on Alert.status and Alert.severity for performance
 
-### Phase 5: Alert History (P4 - US4)
-- Create AlertHistory model for all status changes
-- Implement GET /api/alerts/history endpoint with date range
-- Track all state transitions with operator info
-- Frontend history timeline/table view
+### Phase 6: User Story 4 - View Alert History (P4)
+- Implement GET /api/alerts/history endpoint with date range parameters
+- History query logic and database indexes for performance
+- Alert history template with date range picker
+- Timeline/table view with alert lifecycle visualization
 
-### Phase 6: Frontend & Polish
-- Create alerts.html dashboard view
-- Build real-time alert UI with WebSocket integration
-- Severity color-coding and visual styling
-- Connection status indicator
-- Error handling and graceful degradation
-- Performance optimization (pagination, virtualization for 1000+ alerts)
+### Phase 7: Polish & Cross-Cutting Concerns
+- Connection status indicator and automatic reconnect logic
+- Alert queuing/buffering during API downtime
+- Error handling and user notifications
+- Performance optimization (pagination, virtual scrolling for 1000+ alerts)
+- Comprehensive testing (unit, integration, performance)
+- Logging and monitoring infrastructure
+
+## Database Schema Field Population Mapping
+
+The following tasks populate specific database schema fields:
+
+| Field | Table | Populated By Tasks | Description |
+|-------|-------|-------------------|-------------|
+| `id`, `created_at` | Alert | T006, T007, T009 | Task polling creates alert records on initial entry |
+| `zabbix_event_id`, `zabbix_problem_id` | Alert | T005, T006 | ZabbixService extracts from Zabbix API response |
+| `host`, `alert_name`, `severity` | Alert | T006, T007 | Data parsed from Zabbix event in polling task |
+| `status` (New/Acknowledged/Resolved) | Alert | T006, T021, T009 | Initial set to New by polling, updated by T021 on acknowledge, T009 on resolution |
+| `last_updated_at` | Alert | T012, T024 | Updated when alert broadcast to clients (T012) or status changes (T024) |
+| `resolved_at` | Alert | T009 | Set when alert status transitions to Resolved |
+| `raw_zabbix_data` | Alert | T006 | Full JSON from Zabbix API stored for extensibility |
+| All fields | AlertAcknowledgment | T019, T023 | Created when operator acknowledges via T019, operator_name from T023 |
+| All fields | AlertHistory | T024, T035 | Created on every status change: T024 for acknowledge transitions, T035 for lifecycle tracking |
+
+## Key Implementation Details
+
+### Polling Strategy
+- **Interval**: 1-2 seconds (configured via environment variable, default 2s)
+- **Rationale**: Balances 2-second end-to-end latency requirement with Zabbix API load
+- **Correlation ID**: Each polling cycle gets unique ID for tracing and deduplication
+- **Incremental Fetch**: Query only events changed since last poll (use lastEventTime)
+
+### Operator Name Extraction
+- **Source**: Flask session or request auth header (X-Operator-Name or similar)
+- **Fallback**: Anonymous if not available in development/testing
+- **Storage**: Captured in AlertAcknowledgment.operator_name and AlertHistory.changed_by
+
+### Data Retention
+- **Historical Data**: Rolling 30-day window (alerts older than 30 days can be archived/deleted)
+- **Archive Strategy**: Post-MVP feature (not in Phase 6) - store in separate table or file storage
+- **Cleanup Job**: Scheduled task to run daily to remove alerts older than 30 days
 
 ## Success Metrics (Implementation Checklist)
 
-- [ ] Alert polling latency < 2 seconds (end-to-end)
-- [ ] 99.9% alert delivery reliability achieved
-- [ ] Dashboard handles 1000+ alerts without UI lag
-- [ ] 100% acknowledgment sync to Zabbix
+- [ ] Alert polling latency < 2 seconds (end-to-end Zabbix trigger to dashboard display)
+- [ ] 99.9% alert delivery reliability achieved (less than 1 alert lost per 1000)
+- [ ] Dashboard handles 1000+ concurrent alerts without UI lag or degradation
+- [ ] 100% acknowledgment sync to Zabbix (all app acknowledgments synced)
 - [ ] All FR-001 through FR-010 functional requirements implemented
-- [ ] All acceptance scenarios passing
-- [ ] All success criteria SC-001 through SC-008 met
-- [ ] No data loss under 100 concurrent alert streams
+- [ ] All acceptance scenarios passing (36 scenarios across 4 user stories)
+- [ ] All success criteria SC-001 through SC-008 achieved
+- [ ] Zero data loss under 100 concurrent alert streams
 
 ## Open Questions & Risks
 

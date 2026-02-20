@@ -3,7 +3,7 @@
 **Feature**: 001-realtime-alerts  
 **Created**: February 20, 2026  
 **Last Updated**: February 20, 2026  
-**Total Tasks**: 25  
+**Total Tasks**: 45  
 **Phases**: 7
 
 ---
