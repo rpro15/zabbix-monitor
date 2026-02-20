@@ -14,48 +14,114 @@ class AlertService:
     @staticmethod
     def store_alerts(alerts_data: List[Dict[str, Any]]) -> Dict[str, int]:
         """
-        Store alerts from Zabbix API response, with deduplication by zabbix_event_id.
+        Store alerts from Zabbix API response, with advanced deduplication by zabbix_event_id.
+        
+        Deduplication strategy:
+        1. Primary key: zabbix_event_id (UNIQUE constraint)
+        2. For updates: Compare severity, name, host to detect if alert changed
+        3. Track duplicate attempts to prevent double-processing
         
         Args:
             alerts_data: List of alert dictionaries from Zabbix API
             
         Returns:
-            Dictionary with counts: {'created': int, 'updated': int, 'skipped': int}
+            Dictionary with counts: {'created': int, 'updated': int, 'skipped': int, 'duplicates': int}
         """
-        counts = {'created': 0, 'updated': 0, 'skipped': 0}
+        counts = {'created': 0, 'updated': 0, 'skipped': 0, 'duplicates': 0}
+        
+        if not alerts_data:
+            logger.debug("No alerts to process")
+            return counts
+        
+        # Build a map of event_ids in this batch to detect batch duplicates
+        event_ids_in_batch = {}
+        for alert_data in alerts_data:
+            event_id = alert_data.get('eventid')
+            if event_id in event_ids_in_batch:
+                counts['duplicates'] += 1
+                logger.warning(
+                    f"Duplicate event in batch: eventid={event_id} appeared multiple times"
+                )
+            event_ids_in_batch[event_id] = alert_data
         
         try:
-            for alert_data in alerts_data:
-                zabbix_event_id = alert_data.get('eventid')
+            for event_id, alert_data in event_ids_in_batch.items():
+                if not event_id:
+                    counts['skipped'] += 1
+                    logger.warning("Alert missing eventid field, skipping")
+                    continue
                 
                 # Check for existing alert (deduplication by event_id)
-                existing = Alert.query.filter_by(zabbix_event_id=zabbix_event_id).first()
+                existing = Alert.query.filter_by(zabbix_event_id=event_id).first()
                 
                 if existing:
-                    # Update existing alert
+                    # Check if alert content actually changed
+                    severity = int(alert_data.get('severity', existing.severity))
+                    name = alert_data.get('name', existing.alert_name)
+                    host = alert_data.get('host', existing.host)
+                    problem_id = alert_data.get('problemid', existing.zabbix_problem_id)
+                    
+                    # Update last_updated_at and raw data always
                     existing.last_updated_at = datetime.utcnow()
                     existing.raw_zabbix_data = alert_data
+                    
+                    # Check if payload changed (severity, name, or host)
+                    changed = (
+                        existing.severity != severity or
+                        existing.alert_name != name or
+                        existing.host != host or
+                        existing.zabbix_problem_id != problem_id
+                    )
+                    
+                    if changed:
+                        existing.severity = severity
+                        existing.alert_name = name
+                        existing.host = host
+                        existing.zabbix_problem_id = problem_id
+                        logger.debug(
+                            f"Alert updated: eventid={event_id}, "
+                            f"host={host}, severity={severity}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Alert unchanged: eventid={event_id} (re-received with same data)"
+                        )
+                    
                     counts['updated'] += 1
                 else:
                     # Create new alert
-                    alert = Alert(
-                        zabbix_event_id=zabbix_event_id,
-                        zabbix_problem_id=alert_data.get('problemid'),
-                        host=alert_data.get('host', 'Unknown'),
-                        alert_name=alert_data.get('name', 'Unnamed Alert'),
-                        severity=int(alert_data.get('severity', 2)),
-                        status=AlertStatus.NEW.value,
-                        timestamp=datetime.fromtimestamp(int(alert_data.get('clock', 0))),
-                        raw_zabbix_data=alert_data
-                    )
-                    db.session.add(alert)
-                    counts['created'] += 1
+                    try:
+                        alert = Alert(
+                            zabbix_event_id=event_id,
+                            zabbix_problem_id=alert_data.get('problemid'),
+                            host=alert_data.get('host', 'Unknown'),
+                            alert_name=alert_data.get('name', 'Unnamed Alert'),
+                            severity=int(alert_data.get('severity', 2)),
+                            status=AlertStatus.NEW.value,
+                            timestamp=datetime.fromtimestamp(int(alert_data.get('clock', 0))),
+                            raw_zabbix_data=alert_data
+                        )
+                        db.session.add(alert)
+                        counts['created'] += 1
+                        logger.info(
+                            f"Alert created: eventid={event_id}, "
+                            f"host={alert.host}, severity={alert.severity}"
+                        )
+                    except ValueError as e:
+                        counts['skipped'] += 1
+                        logger.error(
+                            f"Failed to parse alert data for eventid={event_id}: {str(e)}"
+                        )
+                        continue
             
             db.session.commit()
-            logger.info(f"Alerts stored: {counts}")
+            logger.info(
+                f"Batch processed: Created={counts['created']}, Updated={counts['updated']}, "
+                f"Skipped={counts['skipped']}, Duplicates in batch={counts['duplicates']}"
+            )
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error storing alerts: {str(e)}")
+            logger.error(f"Error storing alerts: {str(e)}", exc_info=True)
             counts['skipped'] = len(alerts_data) - counts['created'] - counts['updated']
         
         return counts
@@ -300,34 +366,108 @@ class AlertService:
 
 
 class ConnectionStateManager:
-    """Manager for tracking Zabbix API connection state"""
+    """Manager for tracking Zabbix API connection state with exponential backoff reconnection strategy"""
     
-    def __init__(self):
+    def __init__(self, initial_backoff_seconds: int = 1, max_backoff_seconds: int = 300):
+        """
+        Initialize connection state manager.
+        
+        Args:
+            initial_backoff_seconds: Initial backoff delay (default 1s)
+            max_backoff_seconds: Maximum backoff delay (default 300s = 5min)
+        """
         self.is_connected = False
         self.last_check = None
         self.error_count = 0
         self.last_error = None
+        self.consecutive_failures = 0
+        self.last_successful_poll = None
+        
+        # Exponential backoff parameters
+        self.initial_backoff = initial_backoff_seconds
+        self.max_backoff = max_backoff_seconds
+        self.current_backoff = initial_backoff_seconds
+        self.next_reconnect_attempt = None
+        
+        logger.info(
+            f"ConnectionStateManager initialized: backoff {initial_backoff_seconds}s-{max_backoff_seconds}s"
+        )
     
     def mark_connected(self):
-        """Mark API as connected"""
+        """Mark API as connected and reset backoff"""
         self.is_connected = True
         self.error_count = 0
+        self.consecutive_failures = 0
+        self.current_backoff = self.initial_backoff
         self.last_check = datetime.utcnow()
-        logger.info("Zabbix API connection established")
+        self.last_successful_poll = datetime.utcnow()
+        self.next_reconnect_attempt = None
+        logger.info("✓ Zabbix API connection established (backoff reset)")
     
     def mark_disconnected(self, error: str):
-        """Mark API as disconnected with error message"""
+        """
+        Mark API as disconnected with error message.
+        
+        Increments failure counter and calculates next backoff.
+        
+        Args:
+            error: Error message
+        """
         self.is_connected = False
         self.error_count += 1
+        self.consecutive_failures += 1
         self.last_error = error
         self.last_check = datetime.utcnow()
-        logger.warning(f"Zabbix API connection failed: {error}")
+        logger.warning(f"✗ Zabbix API disconnected (error #{self.error_count}): {error}")
+    
+    def attempt_reconnect(self) -> bool:
+        """
+        Check if reconnection should be attempted based on exponential backoff.
+        
+        Returns:
+            True if reconnection should be attempted, False if still in backoff period
+        """
+        now = datetime.utcnow()
+        
+        # If not yet scheduled or time has arrived
+        if self.next_reconnect_attempt is None:
+            self.next_reconnect_attempt = now
+            logger.info(f"⏱️  Next reconnect attempt scheduled immediately")
+            return True
+        
+        # Check if backoff period has elapsed
+        if now >= self.next_reconnect_attempt:
+            # Calculate next backoff (exponential: 1s, 2s, 4s, 8s, ..., capped at 5min)
+            next_backoff = min(self.current_backoff * 2, self.max_backoff)
+            self.next_reconnect_attempt = now + __import__('datetime').timedelta(seconds=self.current_backoff)
+            
+            logger.info(
+                f"⏱️  Reconnect attempt #{self.consecutive_failures}: backoff was {self.current_backoff}s, "
+                f"next attempt in {self.current_backoff}s (max will be {next_backoff}s)"
+            )
+            
+            self.current_backoff = next_backoff
+            return True
+        else:
+            # Still in backoff period
+            wait_time = (self.next_reconnect_attempt - now).total_seconds()
+            logger.debug(f"⏱️  Still in backoff: wait {wait_time:.1f}s until next reconnect attempt")
+            return False
     
     def get_status(self) -> Dict[str, Any]:
-        """Get current connection status"""
+        """
+        Get current connection status.
+        
+        Returns:
+            Dictionary with detailed connection state
+        """
         return {
             'is_connected': self.is_connected,
             'last_check': self.last_check.isoformat() if self.last_check else None,
+            'last_successful_poll': self.last_successful_poll.isoformat() if self.last_successful_poll else None,
             'error_count': self.error_count,
-            'last_error': self.last_error
+            'consecutive_failures': self.consecutive_failures,
+            'last_error': self.last_error,
+            'current_backoff_seconds': self.current_backoff,
+            'next_reconnect_attempt': self.next_reconnect_attempt.isoformat() if self.next_reconnect_attempt else None
         }
