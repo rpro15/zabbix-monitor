@@ -129,6 +129,12 @@ def alerts_dashboard():
     return render_template('alerts.html')
 
 
+@app.route('/alerts/history')
+def alerts_history():
+    """Serve alert history page (T032, T033: Browse historical alerts by date range)"""
+    return render_template('alerts-history.html')
+
+
 @app.route('/api/health')
 def health():
     """System health check endpoint"""
