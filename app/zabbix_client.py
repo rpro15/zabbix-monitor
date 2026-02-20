@@ -1,4 +1,5 @@
 from pyzabbix import ZabbixAPI
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class ZabbixClient:
             logger.error(f"Failed to connect to Zabbix: {e}")
             raise
 
-    def create_host(self, host_data: dict) -> str | None:
+    def create_host(self, host_data: dict) -> Optional[str]:
         try:
             result = self.zapi.host.create(**host_data)
             host_id = result['hostids'][0]

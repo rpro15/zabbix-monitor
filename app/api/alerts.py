@@ -15,6 +15,12 @@ alerts_bp = Blueprint('alerts', __name__, url_prefix='/api/alerts')
 # Global SocketIO reference (will be set by app.py)
 _socketio = None
 
+def _parse_iso_datetime(value: str) -> datetime:
+    """Parse ISO datetime, accepting trailing 'Z' for UTC."""
+    if value.endswith('Z'):
+        value = value[:-1] + '+00:00'
+    return datetime.fromisoformat(value)
+
 def set_socketio(socketio):
     """Set global SocketIO reference for WebSocket broadcasting"""
     global _socketio
@@ -174,8 +180,8 @@ def get_alert_history():
         
         # Parse dates
         try:
-            date_from = datetime.fromisoformat(date_from_str)
-            date_to = datetime.fromisoformat(date_to_str)
+            date_from = _parse_iso_datetime(date_from_str)
+            date_to = _parse_iso_datetime(date_to_str)
         except ValueError:
             return jsonify({
                 'success': False,
@@ -221,9 +227,9 @@ def get_single_alert_history(alert_id):
         date_from = None
         date_to = None
         if date_from_str:
-            date_from = datetime.fromisoformat(date_from_str)
+            date_from = _parse_iso_datetime(date_from_str)
         if date_to_str:
-            date_to = datetime.fromisoformat(date_to_str)
+            date_to = _parse_iso_datetime(date_to_str)
         
         # Get history
         history = AlertService.get_alert_history(alert_id, date_from, date_to)
