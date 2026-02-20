@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alert History - Zabbix Monitoring</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/css/alerts.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <h1>Alert History</h1>
+            <div class="header-nav">
+                <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+            </div>
+        </header>
+
+        <!-- Date Range Filter Panel -->
+        <div class="filter-panel">
+            <div class="filter-row">
+                <label>
+                    From Date:
+                    <input type="datetime-local" id="history-date-from">
+                </label>
+
+                <label>
+                    To Date:
+                    <input type="datetime-local" id="history-date-to">
+                </label>
+
+                <button id="history-filter-btn" class="btn btn-primary">Search History</button>
+                <button id="history-today-btn" class="btn btn-secondary">Today</button>
+                <button id="history-week-btn" class="btn btn-secondary">Last 7 Days</button>
+                <button id="history-month-btn" class="btn btn-secondary">Last 30 Days</button>
+            </div>
+        </div>
+
+        <!-- History Container -->
+        <div class="history-container">
+            <div id="history-loading" class="loading-message" style="display: none;">
+                <p>Loading alert history...</p>
+            </div>
+
+            <div id="history-no-results" class="empty-message" style="display: none;">
+                <p>No alerts found for selected date range</p>
+            </div>
+
+            <!-- Summary Stats -->
+            <div id="history-stats" class="history-stats" style="display: none;">
+                <div class="stat">
+                    <div class="stat-value" id="history-total">0</div>
+                    <div class="stat-label">Total Alerts</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="history-critical">0</div>
+                    <div class="stat-label">Critical</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="history-high">0</div>
+                    <div class="stat-label">High</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="history-acknowledged">0</div>
+                    <div class="stat-label">Acknowledged</div>
+                </div>
+            </div>
+
+            <!-- History List -->
+            <div id="history-list" class="history-list">
+                <!-- History items will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+            <button id="history-prev-page-btn" class="btn btn-secondary" disabled>Previous</button>
+            <span id="history-page-info" class="page-info">Page 1</span>
+            <button id="history-next-page-btn" class="btn btn-secondary" disabled>Next</button>
+        </div>
+    </div>
+
+    <!-- Alert Detail Modal -->
+    <div id="alert-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <div id="modal-body" class="modal-body">
+                <!-- Alert details will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button id="acknowledge-btn" class="btn btn-acknowledge">Acknowledge</button>
+                <button id="close-modal-btn" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/alerts-history.js"></script>
+</body>
+</html>
