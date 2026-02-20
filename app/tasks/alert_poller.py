@@ -19,18 +19,19 @@ polling_metrics = {
 }
 
 
-def poll_alerts_task(zabbix_service, alert_service, connection_state):
+def poll_alerts_task(zabbix_service, alert_service, connection_state, socketio=None):
     """
     Background task to poll Zabbix API for new/updated alerts.
     
     Called every 1-5 seconds by APScheduler.
+    Broadcasts new alerts to WebSocket clients in real-time.
     Tracks connection state and polling metrics.
-    Implements exponential backoff via connection_state.
     
     Args:
         zabbix_service: ZabbixService instance
         alert_service: AlertService instance
         connection_state: ConnectionStateManager instance
+        socketio: Flask-SocketIO instance (optional, for WebSocket broadcast)
     
     Returns:
         Dictionary with poll results or None on failure
@@ -50,6 +51,24 @@ def poll_alerts_task(zabbix_service, alert_service, connection_state):
             
             # Store alerts in database (with deduplication)
             result = alert_service.store_alerts(alerts_data)
+            
+            # Broadcast newly created/updated alerts to WebSocket clients
+            if result['created'] > 0 and socketio:
+                try:
+                    # Note: alerts_data is from Zabbix, need to fetch from DB to get our IDs
+                    # For now, broadcast the raw data with a marker that it's new
+                    socketio.emit(
+                        'new_alerts_batch',
+                        {
+                            'created': result['created'],
+                            'updated': result['updated'],
+                            'timestamp': start_time.isoformat()
+                        },
+                        namespace='/'
+                    )
+                    logger.debug(f"Broadcasted {result['created']} new alerts to WebSocket clients")
+                except Exception as e:
+                    logger.error(f"Error broadcasting alerts via WebSocket: {str(e)}")
             
             # Update polling metrics
             polling_metrics['successful_polls'] += 1
@@ -81,6 +100,20 @@ def poll_alerts_task(zabbix_service, alert_service, connection_state):
             f"(consecutive: {polling_metrics['consecutive_failures']})",
             exc_info=False
         )
+        
+        # Broadcast connection error to clients
+        if socketio:
+            try:
+                socketio.emit(
+                    'connection_error',
+                    {
+                        'error': error_str,
+                        'timestamp': start_time.isoformat()
+                    },
+                    namespace='/'
+                )
+            except Exception as broadcast_err:
+                logger.error(f"Error broadcasting connection error: {str(broadcast_err)}")
         
         # Mark disconnected
         connection_state.mark_disconnected(error_str)

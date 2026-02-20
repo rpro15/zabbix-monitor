@@ -1,6 +1,6 @@
 import os
 import logging
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_socketio import SocketIO, emit, disconnect
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
@@ -73,7 +73,7 @@ def start_scheduler():
         if zabbix_service:
             scheduler.add_job(
                 func=poll_alerts_task,
-                args=(zabbix_service, AlertService, connection_state),
+                args=(zabbix_service, AlertService, connection_state, socketio),
                 trigger='interval',
                 seconds=polling_interval,
                 id='alert_polling',
@@ -115,6 +115,12 @@ except Exception as e:
 @app.route('/')
 def index():
     return "<h1>Zabbix Monitor - Real-time Alerts</h1><p>Service running</p>"
+
+
+@app.route('/alerts')
+def alerts_dashboard():
+    """Serve real-time alert dashboard (T013)"""
+    return render_template('alerts.html')
 
 
 @app.route('/api/health')

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Zabbix Alert Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/css/alerts.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <h1>Real-time Alert Dashboard</h1>
+            <div class="header-status">
+                <div class="connection-indicator">
+                    <span id="connection-status" class="status-dot disconnected"></span>
+                    <span id="connection-text" class="status-text">Connecting...</span>
+                </div>
+                <div class="stats">
+                    <span id="alert-count" class="stat-item">0 alerts</span>
+                    <span id="poll-count" class="stat-item">0 polls</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Filter Panel -->
+        <div class="filter-panel">
+            <div class="filter-row">
+                <label>
+                    Status:
+                    <select id="filter-status">
+                        <option value="">All</option>
+                        <option value="new">New</option>
+                        <option value="acknowledged">Acknowledged</option>
+                        <option value="resolved">Resolved</option>
+                    </select>
+                </label>
+
+                <label>
+                    Severity:
+                    <select id="filter-severity">
+                        <option value="">All</option>
+                        <option value="5">Critical</option>
+                        <option value="4">High</option>
+                        <option value="3">Average</option>
+                        <option value="2">Warning</option>
+                        <option value="1">Information</option>
+                        <option value="0">Not classified</option>
+                    </select>
+                </label>
+
+                <label>
+                    Hostname:
+                    <input type="text" id="filter-host" placeholder="Search hostname...">
+                </label>
+
+                <label>
+                    Alert Name:
+                    <input type="text" id="filter-search" placeholder="Search alert name...">
+                </label>
+
+                <button id="filter-btn" class="btn btn-primary">Apply Filters</button>
+                <button id="clear-filters-btn" class="btn btn-secondary">Clear All</button>
+            </div>
+        </div>
+
+        <!-- Alerts Container -->
+        <div class="alerts-container">
+            <div id="loading-indicator" class="loading-message">
+                <p>Loading alerts...</p>
+            </div>
+
+            <div id="no-alerts-message" class="empty-message" style="display: none;">
+                <p>No alerts found</p>
+            </div>
+
+            <div id="alerts-list" class="alerts-list">
+                <!-- Alerts will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+            <button id="prev-page-btn" class="btn btn-secondary" disabled>Previous</button>
+            <span id="page-info" class="page-info">Page 1</span>
+            <button id="next-page-btn" class="btn btn-secondary" disabled>Next</button>
+        </div>
+    </div>
+
+    <!-- Alert Detail Modal -->
+    <div id="alert-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <div id="modal-body" class="modal-body">
+                <!-- Alert details will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button id="acknowledge-btn" class="btn btn-primary">Acknowledge</button>
+                <button id="close-modal-btn" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/alerts-dashboard.js"></script>
+</body>
+</html>
